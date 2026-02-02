@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>终末地武器基质计算</title>
+    <style>
+        /* 极简样式，仅做基础排版和日志显色 */
+        * {margin: 10px; padding: 0; font-size: 16px;}
+        input, button, file {padding: 5px 10px;}
+        button {cursor: pointer; background: #eee; border: 1px solid #ccc;}
+        button:hover {background: #ddd;}
+        .log-info {color: green;}    /* info绿色 */
+        .log-warning {color: orange;}/* warning黄色（比纯黄更醒目） */
+        .log-debug {color: blue;}    /* debug蓝色 */
+        .indent-2em { text-indent: 2em; }
+        #result {margin-top: 20px; padding-top: 20px; border-top: 1px solid #ccc;}
+    </style>
+</head>
+<body>
+    <!-- 1. 文件上传区：对应3个JSON文件 -->
+    <div>
+        <h3>上传JSON文件</h3>
+        基础.json：<input type="file" id="baseFile" accept=".json"><br>
+        武器.json：<input type="file" id="weaponFile" accept=".json"><br>
+        能量淤积点.json：<input type="file" id="placeFile" accept=".json">
+    </div>
+
+    <!-- 2. 参数输入区：武器名 + 星级等级 -->
+    <div>
+        <h3>刷取地点计算</h3>
+        武器名称：<input type="text" id="weaponName" placeholder="如：宏愿" value="宏愿"><br>
+        星级等级：<input type="number" id="starLevel" placeholder="默认3" value="3" min="3" max="6">
+        <button onclick="runCalculate()">开始计算</button>
+        <button onclick="clearAll()">清空输出</button>
+    </div>
+    <!-- 2.1 参数输入区：武器名 + 星级等级 -->
+    <div>
+        <h3>适配武器计算</h3>
+        属性：<input type="text" id="attributeName" placeholder="如：敏捷提升,附术,攻击提升" value="敏捷提升,附术,攻击提升"><br>
+        <button onclick="attributeCheck()">开始计算</button>
+        <button onclick="clearAll()">清空输出</button>
+    </div>
+
+    <!-- 3. 结果输出区：日志+print内容统一展示 -->
+    <div id="result"></div>
+
+    <script>
+        // 全局存储上传的JSON数据
+        let baseData = null, weaponData = null, placeData = null;
+
+        // 初始化文件上传监听：读取JSON内容并存储
+        [document.getElementById('baseFile'), document.getElementById('weaponFile'), document.getElementById('placeFile')].forEach(fileInput => {
+            fileInput.onchange = function(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = function(ev) {
+                    try {
+                        const json = JSON.parse(ev.target.result);
+                        // 根据ID匹配存储对应数据
+                        if (this.id === 'baseFile') baseData = json;
+                        else if (this.id === 'weaponFile') weaponData = json;
+                        else if (this.id === 'placeFile') placeData = json;
+                        log('info', `✅ ${file.name} 上传并解析成功`);
+                    } catch (err) {
+                        log('warning', `❌ ${file.name} 不是合法JSON文件：${err.message}`);
+                    }
+                }.bind(this);
+                reader.readAsText(file, 'utf-8');
+            };
+        });
+
+        // 日志方法：
+        function log(type, msg) {
+            const result = document.getElementById('result');
+            const div = document.createElement('div');
+            // 给不同级别加类名显色，拼接时间戳
+            div.className = `log-${type}`;
+            div.innerText = `[${new Date().toLocaleTimeString()}][${type}] ${msg}`;
+            result.appendChild(div);
+        }
+
+        // 模拟Python print：直接纯文本输出到结果区
+        function print(msg) {
+            const result = document.getElementById('result');
+            const div = document.createElement('div');
+            div.innerHTML = msg;
+            result.appendChild(div);
+        }
+
+        // 核心：地点计算方法（对应原Python place_calculate）
+        function placeCalculate(data, level) {
+            if (!placeData[data.地点]) {
+                log("warning", "地点不存在");
+                return null;
+            }
+            const placeItem = placeData[data.地点];
+            if (!placeItem.基础.includes(data.基础属性)) {
+                log("warning", "武器无法在此副本毕业-主属性异常");
+                return null;
+            }
+
+            // 初始化返回字典，排除当前基础属性
+            const returnDict = {};
+            for (const key of placeItem.基础) {
+                if (key !== data.基础属性) returnDict[key] = new Set();
+            }
+
+            // 校验副属性
+            const isSubInAdd = placeItem.附加.includes(data.副属性);
+            const isSubInSkill = placeItem.技能.includes(data.副属性);
+            if (!isSubInAdd && !isSubInSkill) {
+                log("warning", "武器无法在此副本毕业-副本属性异常");
+                return null;
+            }
+
+            // 遍历武器匹配
+            for (const [weaponName, weaponItem] of Object.entries(weaponData)) {
+                if (parseInt(weaponItem.星级) < level) continue;
+                if (weaponItem.基础 === data.基础属性 || !returnDict[weaponItem.基础]) continue;
+
+                if (isSubInAdd && weaponItem.附加 === data.副属性 && placeItem.技能.includes(weaponItem.技能)) {
+                    returnDict[weaponItem.基础].add([weaponName, ...Object.values(weaponItem)].join(" | "));
+                } else if (isSubInSkill && weaponItem.技能 === data.副属性 && (placeItem.附加.includes(weaponItem.附加) || weaponItem.附加 === "-")) {
+                    returnDict[weaponItem.基础].add([weaponName, ...Object.values(weaponItem)].join(" | "));
+                }
+            }
+
+            // Set转数组方便遍历print
+            Object.keys(returnDict).forEach(key => returnDict[key] = Array.from(returnDict[key]));
+            return returnDict;
+        }
+
+        // 核心：初始化校验（对应原Python __init__ 校验逻辑）
+        function initCheck() {
+            // 校验文件是否全部上传
+            if (!baseData || !weaponData || !placeData) {
+                log("warning", "请先上传【基础.json、武器.json、能量淤积点.json】三个文件");
+                return false;
+            }
+            // 校验三大属性无重复
+            const allKey = [...baseData.基础, ...baseData.附加, ...baseData.技能];
+            if (allKey.length !== new Set(allKey).size) {
+                log("warning", "三大基础属性有重复，如果是版本更新请调整check函数");
+            }
+            // 校验能量淤积点属性
+            for (const [pName, pData] of Object.entries(placeData)) {
+                for (const [k, vals] of Object.entries(pData)) {
+                    vals.forEach(v => {
+                        if (!baseData[k].includes(v)) {
+                            log("warning", `[${pName}][${k}]属性异常->${v}`);
+                            return false;
+                        }
+                    });
+                }
+            }
+            // 校验武器属性
+            for (const [wName, wData] of Object.entries(weaponData)) {
+                for (const k of ["基础", "附加", "技能"]) {
+                    const v = wData[k];
+                    if (k === "附加" && v === "-") continue;
+                    if (!baseData[k].includes(v)) {
+                        log("warning", `[${wName}][${k}]属性异常->${v}`);
+                        return false;
+                    }
+                }
+            }
+            log("debug", "所有文件校验通过，开始计算...");
+            return true;
+        }
+
+        // 主计算方法（整合所有逻辑）
+        function runCalculate() {
+            try {
+                // 1. 初始化校验
+                if(!initCheck())return;
+                // 2. 获取输入参数
+                const weapon = document.getElementById('weaponName').value.trim();
+                const level = parseInt(document.getElementById('starLevel').value) || 3;
+                if (!weapon) {
+                    log("warning", "武器名称不能为空");
+                    return;
+                }
+                // 3. 校验武器是否存在
+                if (!weaponData[weapon]) {
+                    log("warning", `缺失武器->${weapon}`);
+                    return;
+                }
+                const weaponInfo = weaponData[weapon];
+
+                // 4. 遍历地点匹配可毕业副本
+                for (const [placeName, placeItem] of Object.entries(placeData)) {
+                    const isBaseOk = placeItem.基础.includes(weaponInfo.基础);
+                    const isAddOk = weaponInfo.附加 === "-" || placeItem.附加.includes(weaponInfo.附加);
+                    const isSkillOk = placeItem.技能.includes(weaponInfo.技能);
+                    if (!isBaseOk || !isAddOk || !isSkillOk) continue;
+
+                    // 打印副本分隔线
+                    const split30 = "-".repeat(30);
+                    log("info", `${split30}${placeName}${split30}`);
+
+                    // 基础+附加 组合计算
+                    if (weaponInfo.附加 !== "-") {
+                        const split20 = "-".repeat(20);
+                        print(`${split20}基础:${weaponInfo.基础}--附加:${weaponInfo.附加}${split20}`);
+                        const res = placeCalculate({地点: placeName, 基础属性: weaponInfo.基础, 副属性: weaponInfo.附加}, level);
+                        if (res) {
+                            for (const [k, vals] of Object.entries(res)) {
+                                if(vals.length > 0){
+                                    print(k);
+                                    vals.forEach(v => print(`<p class="indent-2em">${v}</p>`));
+                                }
+                            }
+                        }
+                    }
+
+                    // 基础+技能 组合计算
+                    const split20 = "-".repeat(20);
+                    print(`${split20}基础:${weaponInfo.基础}--技能:${weaponInfo.技能}${split20}`);
+                    const skillRes = placeCalculate({地点: placeName, 基础属性: weaponInfo.基础, 副属性: weaponInfo.技能}, level);
+                    if (skillRes) {
+                        for (const [k, vals] of Object.entries(skillRes)) {
+                            if(vals.length > 0){
+                                print(k);
+                                vals.forEach(v => print(`<p class="indent-2em">${v}</p>`));
+                            }
+                        }
+                    }
+                }
+                log("info", "✅ 计算完成！");
+            } catch (err) {
+                log("warning", `❌ 计算失败：${err.message}`);
+            }
+        }
+
+        // 清空所有内容（文件+输入+结果）
+        function clearAll() {
+            document.getElementById('result').innerHTML = "";
+        }
+
+        // 保留原Python的check方法
+        function check(data) {
+            if(data.length !== 3){
+                log("warning", "属性必须且只有三个， 逗号分隔");
+                return;
+            }
+            if (!weaponData){
+                log("warning", "请先上传基础.json和武器.json");
+                return;
+            }
+            let isMatched = false;
+            if (data.includes("主能力提升") && data.includes("强攻")) log("info", `可使[3星武器]毕业`);
+            const inputMap = {};
+            for (const attributeValue of data){
+                isMatched = false;
+                for (const [k, vals] of Object.entries(baseData)) {
+                    if (vals.includes(attributeValue)) {
+                        inputMap[k] = attributeValue;
+                        isMatched = true;
+                        break;
+                    }
+                }
+                if (!isMatched) {
+                    log("warning", `不在基础属性中，请检查输入`);
+                    return;
+                }
+            }
+            if (Object.keys(inputMap).length < 3) {
+                log("debug", `暂无武器可毕业,是不是没用刻写券`);
+                return;
+            }
+            let isFind = false;
+            for (const [wName, wData] of Object.entries(weaponData)) {
+                if (wData.基础 === inputMap.基础 && wData.附加 === inputMap.附加 && wData.技能 === inputMap.技能) {
+                    log("info", `可使--${wName}--毕业`);
+                    isFind = true;
+                }
+            }
+            if (!isFind) log("debug", `暂无武器可毕业`);
+        }
+        function attributeCheck(){
+            if(!initCheck())return;
+            const attribute = document.getElementById('attributeName').value.trim();
+            const splitArr = attribute.split(/[，,]/).filter(item => item);
+            check(splitArr)
+        }
+    </script>
+</body>
+</html>
