@@ -19,7 +19,7 @@ class cuihx_logging:
 
     @staticmethod
     def debug(mes):
-        print(f"\03394m[{mes}\033[0m")
+        print(f"\033[94m{mes}\033[0m")
 
 
 place_calculate_tuple = namedtuple('place_calculate', ["地点", "基础属性", "副属性"])
